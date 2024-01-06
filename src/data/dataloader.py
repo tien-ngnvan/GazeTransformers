@@ -18,8 +18,12 @@ class DataProcessor:
         self.image_processor = image_processor
         self.data_args = data_args
         
+        self.id2label = dict()
         with open(self.data_args.object_path, 'r') as file:
-            self.id2label = file.readlines()   
+            for item in file.readlines():
+                name, idx = item.strip().split('=')
+                self.id2label.update({idx : name})
+
         self.label2id = {v: k for k, v in self.id2label.items()}
         
         self.transform = albumentations.Compose(
@@ -33,24 +37,24 @@ class DataProcessor:
     def __call__(self):
         datasets = {}
         # train set
-        if self.data_args.train_path_list is not None:
-            train_data = self.load_dataset(self.data_args.train_path_list, 'train')
+        if self.data_args.train_dir is not None or self.data_args.dataset_name is not None:
+            train_data = self.load_dataset(self.data_args.dataset_name, 'train')
             
             if self.data_args.max_train_samples is not None:
                 train_data = train_data.select(range(self.data_args.max_train_samples))
             
-            datasets['train'] = self.process_fn(train_data)
+            datasets['train'] = train_data.with_transform(self.transform_aug_ann) #self.process_fn(train_data)
             
         # validation set
-        if self.data_args.validation_path_list is not None:
-            valid_data = self.load_dataset(self.data_args.validation_path_list, 'train')
+        if self.data_args.valid_dir is not None:
+            valid_data = self.load_dataset(self.data_args.valid_dir, 'train')
         
             if self.data_args.max_eval_samples is not None:
                 valid_data = valid_data.select(range(self.data_args.max_eval_samples))
                 
-            datasets['validation'] = self.process_fn(valid_data)
+            datasets['validation'] = valid_data.with_transform(self.transform_aug_ann)
         
-        return datasets
+        return datasets, self.id2label, self.label2id 
     
     def load_dataset(self, data_path:str=None, key:str='train') -> Dataset:
         """ Load datasets function 
@@ -67,34 +71,44 @@ class DataProcessor:
             Datasets
         """
         if not os.path.exists(data_path):
-            raise ValueError(f'Not found {data_path} path.')
-        
-        files = glob.glob(os.path.join(data_path, '*'))
-        extention = files[0].split('.')[-1]
-    
-        try:
-            data_file = f"{data_path}/*.{extention}"
-            
             if self.data_args.streaming:
-                datasets = load_dataset(
-                    extention, data_files=data_file, split=key, streaming=self.data_args.streaming
-                )
+                dataset = load_dataset(data_path, streaming=True)[key]
             else:
-                datasets = load_dataset(
-                    extention, data_files=data_file, split=key, 
-                    num_proc=self.data_args.num_workers
-                )   
-                
+                dataset = load_dataset(data_path, num_proc=self.data_args.num_workers)[key]
+
             # convert format to coco
             dataset = dataset.map(lambda example:convert_obj_to_coco_format(example),
                                   remove_columns=['bboxes', 'labels', 'seg'],
                                   num_proc=self.data_args.num_workers)
-            return datasets
-        except:
-            logger.info(f'Error loading dataset {data_path} with {extention} extention')
+
+            return dataset
+        else:
+            files = glob.glob(os.path.join(data_path, '*'))
+            extention = files[0].split('.')[-1]
+        
+            try:
+                data_file = f"{data_path}/*.{extention}"
+                
+                if self.data_args.streaming:
+                    dataset = load_dataset(
+                        extention, data_files=data_file, split=key, streaming=self.data_args.streaming
+                    )
+                else:
+                    dataset = load_dataset(
+                        extention, data_files=data_file, split=key, 
+                        num_proc=self.data_args.num_workers
+                    )   
+                    
+                # convert format to coco
+                dataset = dataset.map(lambda example:convert_obj_to_coco_format(example),
+                                      remove_columns=['bboxes', 'labels', 'seg'],
+                                      num_proc=self.data_args.num_workers)
+                return dataset
+            except:
+                logger.info(f'Error loading dataset {data_path} with {extention} extention')
     
     # transforming a batch
-    def process_fn(self, examples):
+    def transform_aug_ann(self, examples):
         image_ids = examples["image_id"]
         images, bboxes, area, categories = [], [], [], []
         for image, objects in zip(examples["image"], examples["objects"]):
@@ -131,7 +145,8 @@ class DataProcessor:
 
 
 class DataCollator:
-    image_processor = None
+    def __init__(self, image_processor):
+        self.image_processor = image_processor
     
     def __call__(self, batch):
         pixel_values = [item["pixel_values"] for item in batch]

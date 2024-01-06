@@ -15,7 +15,7 @@ from .argument import (
     DataArguments,
 )
 from .modeling import SenDeTr
-from .data import DataProcessor, DataCollator
+from .data.dataloader import DataProcessor, DataCollator
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +80,18 @@ def main():
 
     set_seed(training_args.seed)
     
-    # prepare data
-    dataset_training = DataProcessor(image_processor, data_args).__call__()
-    data_collator = DataCollator()
-    
     # Prepare processor and model
     image_processor = AutoImageProcessor.from_pretrained(model_args.model_name_or_path)
+
+     # prepare data
+    dataset_training, id2label, label2id  = DataProcessor(image_processor, data_args).__call__()
+    data_collator = DataCollator(image_processor)
+
     model = SenDeTr.from_pretrained(
         model_args.model_name_or_path,
-        num_labels = len(dataset_training.id2label),
-        id2label=dataset_training.id2label,
-        label2id=dataset_training.label2id,
+        num_labels = len(id2label),
+        id2label=id2label,
+        label2id=label2id,
         ignore_mismatched_sizes=True,
     )
     

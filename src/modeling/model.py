@@ -50,6 +50,8 @@ class SenDeTr(DetrPreTrainedModel):
         **kwarg,
     ) -> Union[Tuple[torch.FloatTensor], DetrObjectDetectionOutput]:
         
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+         
         # First, sent images through DETR base model to obtain encoder + decoder outputs
         outputs = self.model(
             pixel_values,

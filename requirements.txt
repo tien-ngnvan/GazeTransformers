@@ -3,3 +3,4 @@ datasets
 timm 
 accelerate 
 albumentations 
+wandb
